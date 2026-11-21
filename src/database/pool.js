@@ -1,13 +1,19 @@
-import {Pool} from 'pg' ;
-import 'dotenv/config' ;
-
+import { Pool } from 'pg';
+import { config } from '../config/env.js';
 
 const pool = new Pool({
-    user: process.env.DB_USER,
-    host: process.env.DB_HOST,
-    database: process.env.DB_NAME,
-    password: process.env.DB_PASSWORD,
-    port: process.env.DB_PORT
+  user: config.database.user,
+  host: config.database.host,
+  database: config.database.name,
+  password: config.database.password,
+  port: config.database.port,
+  max: config.database.poolMax,
+  connectionTimeoutMillis: 5000,
+  idleTimeoutMillis: 30000
+});
+
+pool.on('error', (error) => {
+  console.error('Unexpected idle PostgreSQL client error:', error.message);
 });
 
 

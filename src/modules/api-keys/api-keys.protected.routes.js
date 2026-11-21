@@ -1,15 +1,26 @@
-import express from 'express';
+
+import { Router } from 'express';
 import authenticateApiKey from './api-key-auth.middleware.js';
+import quotaMiddleware from '../quotas/quota.middleware.js';
+import usageMiddleware from '../usage/usage.middleware.js';
 
-const router = express.Router();
+const router = Router();
 
-router.get('/test', authenticateApiKey, (req, res) => {
+router.get(
+  '/test',
+  usageMiddleware,
+  authenticateApiKey,
+  quotaMiddleware,
+  (req, res) => {
     return res.status(200).json({
-        message: 'API key authenticated successfully',
-        apiKeyId: req.keyId,
-        ownerId: req.ownerId,
-        planId: req.planId
+      message: 'Request accepted',
+      apiKeyId: req.keyId,
+      ownerId: req.ownerId,
+      planId: req.planId,
+      rateLimit: req.requestLimits.rateLimit,
+      dailyQuota: req.requestLimits.dailyQuota
     });
-});
+  }
+);
 
 export default router;

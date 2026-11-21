@@ -5,7 +5,7 @@ import createJwtToken from './auth.token.js'
 
 async function registerUser(req,res){
     try{
-        const {name,email,password}  = req.body ;
+        const {name,email,password}  = req.body ?? {};
         if (typeof name !== 'string' || name.trim().length < 2 || name.trim().length > 100) {
             return res.status(400).json({
                 error: 'Name must be between 2 and 100 characters.'
@@ -24,7 +24,13 @@ async function registerUser(req,res){
             });
         }
 
-        const passwordHash = await argon2.hash(password,{type: argon2.argon2id});
+        const passwordHash = await argon2.hash(password,{
+            type: argon2.argon2id,
+            timeCost: 3,
+            memoryCost: 65536,
+            parallelism: 1,
+            hashLength: 32
+        });
         const sql_query = `
             INSERT INTO users(name,email,password_hash)
             VALUES($1,$2,$3) 
@@ -36,16 +42,17 @@ async function registerUser(req,res){
         return res.status(201).json(user);
     }catch(error){
         if(error.code === '23505'){
-            return res.status(409).json('email already registered.');
+            return res.status(409).json({error:'Email already registered'});
         }
-        return res.status(500).json('server error');
+        console.error('Registration failed:', error.message);
+        return res.status(500).json({error:'Internal server error'});
     }
 };
 
 
 async function loginUser(req,res){
     try{
-        const {email,password} = req.body ;
+        const {email,password} = req.body ?? {};
         if (typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
             return res.status(400).json({
                 error: 'Enter a valid email address.'
@@ -65,12 +72,12 @@ async function loginUser(req,res){
         const user = (await pool.query(sql_query,[email.trim().toLowerCase()])).rows[0];
 
         if(user == null){
-            return res.status(401).json('Invalid email or password');
+            return res.status(401).json({error:'Invalid email or password'});
         }
 
         const hash_password = await argon2.verify(user.password_hash, password);
         if(!hash_password){
-            return res.status(401).json('Invalid email or password');
+            return res.status(401).json({error:'Invalid email or password'});
         }
 
         const token = createJwtToken(user.id) ;
@@ -82,8 +89,8 @@ async function loginUser(req,res){
             token: token
         });
     }catch(error){
-        console.log(error.message) ;
-        return res.status(500).json('server faliure') ;
+        console.error('Login failed:', error.message);
+        return res.status(500).json({error:'Internal server error'}) ;
     }
 };
 

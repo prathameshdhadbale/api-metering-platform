@@ -1,0 +1,73 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import request from 'supertest';
+import { installDatabaseHooks } from './helpers/test-hooks.js';
+import { registerAndLogin, createApiKey } from './helpers/fixtures.js';
+import { queryTestDatabase, waitForUsageEvents } from './helpers/database.js';
+
+installDatabaseHooks();
+
+test('analytics endpoints return real usage scoped to the authenticated user', async () => {
+  const { app, token } = await registerAndLogin();
+  await queryTestDatabase("UPDATE plans SET rate_limit_requests=1 WHERE name='Free'");
+  const key = await createApiKey(token);
+  const zeroUsageKey = await createApiKey(token, { name: 'Unused key' });
+  await request(app).get('/api/test').set('x-api-key', key.body.key);
+  await request(app).get('/api/test').set('x-api-key', key.body.key);
+  await waitForUsageEvents(2);
+
+  const headers = { Authorization: `Bearer ${token}` };
+  const summary = await request(app).get('/api/analytics/summary').set(headers);
+  const daily = await request(app).get('/api/analytics/daily?days=7').set(headers);
+  const keys = await request(app).get('/api/analytics/keys').set(headers);
+  const endpoints = await request(app).get('/api/analytics/endpoints').set(headers);
+  const recent = await request(app).get('/api/analytics/recent?limit=5').set(headers);
+  assert.equal(summary.status, 200);
+  assert.equal(summary.body.summary.total_requests, 2);
+  assert.equal(summary.body.summary.admitted_requests, 1);
+  assert.equal(summary.body.summary.rejected_requests, 1);
+  assert.equal(daily.status, 200);
+  assert.equal(daily.body.dailyUsage.length, 7);
+  assert.equal(daily.body.dailyUsage.reduce((total, day) => total + day.total_requests, 0), 2);
+  assert.equal(keys.status, 200);
+  const usedKey = keys.body.apiKeys.find((item) => item.api_key_id === key.body.apiKeyDetails.id);
+  const unusedKey = keys.body.apiKeys.find((item) => item.api_key_id === zeroUsageKey.body.apiKeyDetails.id);
+  assert.equal(usedKey.total_requests, 2);
+  assert.equal(unusedKey.total_requests, 0);
+  assert.equal(endpoints.status, 200);
+  assert.equal(recent.status, 200);
+  assert.equal(recent.body.activity.length, 2);
+  assert.equal(recent.body.activity[0].apiKeyId, key.body.apiKeyDetails.id);
+  assert.equal(recent.body.activity[0].apiKeyName, 'Test key');
+  assert.equal((await request(app).get('/api/analytics/recent?limit=0').set(headers)).status, 400);
+  assert.equal((await request(app).get('/api/analytics/recent?limit=51').set(headers)).status, 400);
+  assert.equal(endpoints.body.endpoints[0].endpoint, '/api/test');
+  assert.equal(endpoints.body.endpoints[0].total_requests, 2);
+  assert.equal(endpoints.body.endpoints[0].admitted_requests, 1);
+  assert.equal(endpoints.body.endpoints[0].rejected_requests, 1);
+  assert.ok(Number(endpoints.body.endpoints[0].average_latency_ms) >= 0);
+  assert.ok(endpoints.body.endpoints[0].max_latency_ms >= 0);
+  const eventLatency = await queryTestDatabase('SELECT AVG(latency_ms) AS average, MAX(latency_ms)::int AS maximum FROM usage_events');
+  assert.ok(Math.abs(Number(endpoints.body.endpoints[0].average_latency_ms) - Number(eventLatency.rows[0].average)) < 0.01);
+  assert.equal(endpoints.body.endpoints[0].max_latency_ms, eventLatency.rows[0].maximum);
+  assert.equal((await request(app).get('/api/analytics/daily?days=0').set(headers)).status, 400);
+  assert.equal((await request(app).get('/api/analytics/daily?days=91').set(headers)).status, 400);
+  assert.equal((await request(app).get('/api/analytics/daily?days=nope').set(headers)).status, 400);
+  assert.equal((await request(app).get('/api/analytics/summary')).status, 401);
+});
+
+test('analytics do not expose another user’s API keys or events', async () => {
+  const first = await registerAndLogin();
+  const key = await createApiKey(first.token);
+  await request(first.app).get('/api/test').set('x-api-key', key.body.key);
+  await waitForUsageEvents(1);
+  const other = await registerAndLogin();
+  const summary = await request(other.app).get('/api/analytics/summary').set('Authorization', `Bearer ${other.token}`);
+  const keys = await request(other.app).get('/api/analytics/keys').set('Authorization', `Bearer ${other.token}`);
+  const recent = await request(other.app).get('/api/analytics/recent').set('Authorization', `Bearer ${other.token}`);
+  const daily = await request(other.app).get('/api/analytics/daily?days=3').set('Authorization', `Bearer ${other.token}`);
+  assert.equal(summary.body.summary.total_requests, 0);
+  assert.deepEqual(keys.body.apiKeys, []);
+  assert.deepEqual(recent.body.activity, []);
+  assert.deepEqual(daily.body.dailyUsage.map((day) => day.total_requests), [0, 0, 0]);
+});

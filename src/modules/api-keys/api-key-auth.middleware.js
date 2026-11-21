@@ -5,7 +5,7 @@ async function authenticateApiKey(req,res,next){
     try{
         const x_api_key = req.get('x-api-key');
         if(!x_api_key){
-            return res.status(401).json('Invalid key');
+            return res.status(401).json({error:'Invalid or inactive API key'});
         }
 
         const hashkey = hashApiKey(x_api_key);
@@ -18,11 +18,11 @@ async function authenticateApiKey(req,res,next){
 
         const result = (await pool.query(sql,[hashkey])).rows[0] ;
         if(!result){
-            return res.status(401).json('Invalid key');
+            return res.status(401).json({error:'Invalid or inactive API key'});
         }
 
         if(result.status !== 'active' || (result.expires_at !== null && result.expires_at <= new Date())){
-            return res.status(401).json('Key Not active');
+            return res.status(401).json({error:'Invalid or inactive API key'});
         }
 
         req.keyId = result.id ;
@@ -33,7 +33,8 @@ async function authenticateApiKey(req,res,next){
 
 
     }catch(err){
-        return res.status(500).json('server error');
+        console.error('API key authentication failed:', err.message);
+        return res.status(500).json({error:'Internal server error'});
     }
 }
 

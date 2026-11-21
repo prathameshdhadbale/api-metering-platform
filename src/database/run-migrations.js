@@ -13,7 +13,10 @@ async function getMigrationFiles(){
 }
 
 async function main(){
-    await pool.query(`
+    const client = await pool.connect();
+    try {
+    await client.query('SELECT pg_advisory_lock($1::bigint)', ['7192843102041']);
+    await client.query(`
         CREATE TABLE IF NOT EXISTS schema_migrations (
             id SERIAL PRIMARY KEY,
             filename VARCHAR UNIQUE,
@@ -21,7 +24,7 @@ async function main(){
         );
     `);
 
-    const result = await pool.query(`
+    const result = await client.query(`
         SELECT filename FROM schema_migrations;
     `);
     const migrationFiles = await getMigrationFiles() ;
@@ -38,8 +41,6 @@ async function main(){
 
     for(const item of pendingMigration){
         const sql_query = await fs.readFile(path.join(migrationDirectory,item), 'utf-8');
-        const client = await pool.connect() ;
-
         try{
             await client.query('BEGIN');
             await client.query(sql_query);
@@ -53,7 +54,12 @@ async function main(){
             await client.query('ROLLBACK');
             console.error(`Migration failed: ${item}`, error.message);
             throw error;
-        }finally{
+        }
+    }
+    } finally {
+        try {
+            await client.query('SELECT pg_advisory_unlock($1::bigint)', ['7192843102041']);
+        } finally {
             client.release();
         }
     }

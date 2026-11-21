@@ -1,10 +1,13 @@
 import jwt from 'jsonwebtoken'
-import 'dotenv/config'
+import { config } from '../../config/env.js';
 
 function createJwtToken(id){
-        const token = jwt.sign({sub: id},process.env.JWT_SECRET,{
-            expiresIn : '15m'
-        }) ;
+        const token = jwt.sign({ sub: id }, config.jwtSecret, {
+            algorithm: 'HS256',
+            expiresIn: '15m',
+            issuer: 'api-metering-platform',
+            audience: 'api-metering-platform-api'
+        });
 
         return token;
 };
